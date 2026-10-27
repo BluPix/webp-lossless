@@ -1,0 +1,26 @@
+{
+  "name": "webp-lossless",
+  "version": "1.0.0",
+  "description": "Lossless WebP encoder in plain TypeScript, without WebAssembly",
+  "private": true,
+  "license": "MIT",
+  "author": "Jiří Němec",
+  "repository": "github:BluPix/webp-lossless",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker": "./src/worker.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "tsc && node --test 'test/*.test.mjs'"
+  },
+  "dependencies": {
+    "@nktkas/webp": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
