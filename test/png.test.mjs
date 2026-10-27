@@ -24,20 +24,42 @@ const paeth = (a, b, c) => {
   const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - b), Math.abs(p - c)]
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
 }
+const ADAM7 = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
+// png writes samples (one number per channel, of `depth` bits) as a PNG: packed below 8 bits, two bytes at 16, in
+// Adam7 passes when interlaced
 const png = ({ width, height, colorType, samples, filters = [0, 1, 2, 3, 4], depth = 8, interlace = 0, before = [], level = 6 }) => {
-  const bpp = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType]
-  const stride = width * bpp
-  const raw = Buffer.alloc(height * (stride + 1))
-  for (let y = 0; y < height; y++) {
-    const filter = filters[y % filters.length]
-    raw[y * (stride + 1)] = filter
-    for (let x = 0; x < stride; x++) {
-      const v = samples[y * stride + x]
-      const a = x >= bpp ? samples[y * stride + x - bpp] : 0
-      const b = y > 0 ? samples[(y - 1) * stride + x] : 0
-      const c = x >= bpp && y > 0 ? samples[(y - 1) * stride + x - bpp] : 0
-      const predicted = [0, a, b, (a + b) >> 1, paeth(a, b, c)][filter]
-      raw[y * (stride + 1) + 1 + x] = (v - predicted) & 0xff
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType]
+  const bpp = Math.max(1, (channels * depth) >> 3)
+  const rows = []
+  let n = 0
+  for (const [x0, y0, dx, dy] of interlace ? ADAM7 : [[0, 0, 1, 1]]) {
+    const w = Math.ceil((width - x0) / dx)
+    const h = Math.ceil((height - y0) / dy)
+    if (w <= 0 || h <= 0) continue
+    let above = new Uint8Array(Math.ceil((w * channels * depth) / 8))
+    for (let y = 0; y < h; y++) {
+      const packed = new Uint8Array(above.length)
+      for (let x = 0; x < w; x++) {
+        for (let c = 0; c < channels; c++) {
+          const v = samples[((y0 + y * dy) * width + x0 + x * dx) * channels + c]
+          const i = x * channels + c
+          if (depth === 16) packed.set([v >> 8, v & 255], 2 * i)
+          else if (depth === 8) packed[i] = v
+          else packed[(i * depth) >> 3] |= v << (8 - depth - ((i * depth) & 7))
+        }
+      }
+      const filter = filters[n++ % filters.length]
+      const row = new Uint8Array(packed.length + 1)
+      row[0] = filter
+      for (let x = 0; x < packed.length; x++) {
+        const a = x >= bpp ? packed[x - bpp] : 0
+        const b = above[x]
+        const c = x >= bpp ? above[x - bpp] : 0
+        const predicted = filter === 1 ? a : filter === 2 ? b : filter === 3 ? (a + b) >> 1 : filter === 4 ? paeth(a, b, c) : 0
+        row[x + 1] = (packed[x] - predicted) & 0xff
+      }
+      rows.push(row)
+      above = packed
     }
   }
   const header = Buffer.alloc(13)
@@ -48,7 +70,7 @@ const png = ({ width, height, colorType, samples, filters = [0, 1, 2, 3, 4], dep
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', header),
     ...before,
-    chunk('IDAT', deflateSync(raw, { level })),
+    chunk('IDAT', deflateSync(Buffer.concat(rows), { level })),
     chunk('IEND'),
   ]))
 }
@@ -113,17 +135,115 @@ const exif = orientation => {
   return chunk('eXIf', tiff)
 }
 
-test('PNG: what WebP could not show the same stays a PNG', async () => {
+// expected gives the RGBA a viewer shows for samples, worked out from the specification on its own
+const expected = ({ colorType, depth = 8, samples, palette, alpha = [], key }) => {
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType]
+  const to8 = v => (depth === 16 ? v >> 8 : depth < 8 ? (v * 255) / (2 ** depth - 1) : v)
+  const out = []
+  for (let i = 0; i < samples.length; i += channels) {
+    const s = Array.from(samples.slice(i, i + channels))
+    if (colorType === 3) out.push(...palette.slice(3 * s[0], 3 * s[0] + 3), alpha[s[0]] ?? 255)
+    else {
+      const transparent = key && s.every((v, c) => v === key[c])
+      const [r, g, b] = (colorType & 2 ? s : [s[0], s[0], s[0]]).map(to8)
+      out.push(r, g, b, transparent ? 0 : colorType === 4 ? to8(s[1]) : colorType === 6 ? to8(s[3]) : 255)
+    }
+  }
+  return Uint8Array.from(out)
+}
+// randomSamples gives samples below `limit`; at 16 bits 8-bit values widened, as WebP takes them
+const randomSamples = (count, depth, limit = 2 ** Math.min(depth, 8)) =>
+  Array.from({ length: count }, () => {
+    const v = Math.floor((random() * 256 + random()) / 65536 * limit)
+    return depth === 16 ? v * 257 : v
+  })
+
+test('PNG: every color type and bit depth, interlaced or not, decodes to the pixels the specification gives', async () => {
+  const palette = Array.from({ length: 16 * 3 }, random)
+  const plte = chunk('PLTE', palette)
+  for (const [type, depths] of Object.entries({ 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] })) {
+    const colorType = Number(type)
+    const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType]
+    for (const depth of depths) {
+      for (const interlace of [0, 1]) {
+        // sizes where some of the seven passes are empty, and one where every pass has several rows
+        for (const [width, height] of [[1, 1], [3, 2], [13, 11]]) {
+          const samples = randomSamples(width * height * channels, depth, colorType === 3 ? Math.min(2 ** depth, 16) : undefined)
+          const name = `type ${colorType}, ${depth} bits, ${interlace ? 'interlaced' : 'not interlaced'}, ${width} × ${height}`
+          const image = await decodePng(png({ width, height, colorType, depth, samples, interlace, before: colorType === 3 ? [plte] : [] }))
+          assert.ok(image, name)
+          assert.deepEqual(rgbaOf(image), expected({ colorType, depth, samples, palette }), name)
+        }
+      }
+    }
+  }
+})
+
+test('PNG: 16-bit samples convert when they are 8-bit ones widened; real 16-bit detail stays PNG', async () => {
+  const widened = randomSamples(6 * 5 * 3, 16)
+  assert.ok(await decodePng(png({ width: 6, height: 5, colorType: 2, depth: 16, samples: widened })))
+  const detail = widened.map((v, i) => (i === 17 ? v + 1 : v))
+  assert.equal(await decodePng(png({ width: 6, height: 5, colorType: 2, depth: 16, samples: detail })), null)
+})
+
+test('PNG: a transparent color key becomes alpha', async () => {
+  const key = (...values) => chunk('tRNS', values.flatMap(v => [v >> 8, v & 255]))
+  // gray at 2 bits, RGB at 8 and at 16 bits, with the key on some pixels
+  const gray = [0, 1, 2, 3, 2, 1]
+  const grayImage = await decodePng(png({ width: 3, height: 2, colorType: 0, depth: 2, samples: gray, before: [key(2)] }))
+  assert.deepEqual(rgbaOf(grayImage), expected({ colorType: 0, depth: 2, samples: gray, key: [2] }))
+  const rgb = [10, 20, 30, 10, 20, 31, 10, 20, 30, 0, 0, 0]
+  const rgbImage = await decodePng(png({ width: 2, height: 2, colorType: 2, samples: rgb, before: [key(10, 20, 30)] }))
+  assert.deepEqual(rgbaOf(rgbImage), expected({ colorType: 2, samples: rgb, key: [10, 20, 30] }))
+  assert.deepEqual([...rgbaOf(rgbImage).subarray(0, 8)], [10, 20, 30, 0, 10, 20, 31, 255])
+  const rgb16 = rgb.map(v => v * 257)
+  const rgb16Image = await decodePng(png({ width: 2, height: 2, colorType: 2, depth: 16, samples: rgb16, before: [key(10 * 257, 20 * 257, 30 * 257)] }))
+  assert.deepEqual(rgbaOf(rgb16Image), rgbaOf(rgbImage))
+})
+
+test('PNG: sRGB told by gAMA and cHRM converts; another gamma, other primaries or HDR stay PNG', async () => {
+  const samples = noise(4 * 4 * 3)
+  const base = { width: 4, height: 4, colorType: 2, samples }
+  const u32s = (...values) => values.flatMap(v => [v >>> 24, (v >>> 16) & 255, (v >>> 8) & 255, v & 255])
+  const gama = value => chunk('gAMA', u32s(value))
+  const srgbChrm = [31270, 32900, 64000, 33000, 30000, 60000, 15000, 6000]
+  const p3Chrm = [31270, 32900, 68000, 32000, 26500, 69000, 15000, 6000]
+  const iccp = chunk('iCCP', Buffer.concat([Buffer.from('p\0\0', 'latin1'), deflateSync(noise(40))]))
+  for (const [name, before] of Object.entries({
+    'cHRM of sRGB alone, as ImageMagick writes': [chunk('cHRM', u32s(...srgbChrm))],
+    'gAMA and cHRM of sRGB': [gama(45455), chunk('cHRM', u32s(...srgbChrm))],
+    'gamma 0.45, as older tools write for 1/2.2': [gama(45000)],
+    'cICP of sRGB': [chunk('cICP', [1, 13, 0, 1])],
+    'a profile next to another gamma': [gama(100000), iccp],
+  })) {
+    assert.ok(await decodePng(png({ ...base, before })), name)
+  }
+  const withCicp = await decodePng(png({ ...base, before: [chunk('cICP', [1, 13, 0, 1]), iccp] }))
+  assert.ok(withCicp && !withCicp.iccProfile, 'cICP of sRGB outranks a profile')
+  for (const [name, before] of Object.entries({
+    'linear gamma': [gama(100000)],
+    'gamma 1.8, as old Macs had': [gama(55556)],
+    'primaries of Display P3': [gama(45455), chunk('cHRM', u32s(...p3Chrm))],
+    'HDR (PQ)': [chunk('cICP', [9, 16, 0, 1])],
+    'narrow range': [chunk('cICP', [1, 13, 0, 0])],
+    'HDR over a profile': [chunk('cICP', [9, 18, 0, 1]), iccp],
+  })) {
+    assert.equal(await decodePng(png({ ...base, before })), null, name)
+  }
+})
+
+test('PNG: what WebP would not show the same, or a broken file, stays a PNG', async () => {
   const samples = noise(4 * 4 * 3)
   const base = { width: 4, height: 4, colorType: 2, samples }
   assert.ok(await decodePng(png({ ...base, before: [exif(1)] })), 'upright EXIF is fine')
+  const plte = chunk('PLTE', [255, 0, 0, 0, 255, 0])
   for (const [name, options] of Object.entries({
-    '16 bits per channel': { depth: 16, samples: noise(4 * 4 * 6) },
-    interlaced: { interlace: 1 },
-    'gamma without sRGB or a profile': { before: [chunk('gAMA', [0, 0, 0xb1, 0x8f])] },
-    'HDR color space': { before: [chunk('cICP', [9, 16, 0, 1])] },
-    'a transparent color key': { before: [chunk('tRNS', [0, 1, 0, 2, 0, 3])] },
+    'an animation': { before: [chunk('acTL', [0, 0, 0, 2, 0, 0, 0, 0])] },
     'rotated by EXIF': { before: [exif(6)] },
+    'a color key next to an alpha channel': { colorType: 6, samples: noise(4 * 4 * 4), before: [chunk('tRNS', [0, 1, 0, 2, 0, 3])] },
+    'a palette index past the palette': { colorType: 3, samples: Array(16).fill(2), before: [plte] },
+    'a palette image without a palette': { colorType: 3, samples: Array(16).fill(0) },
+    'RGB at 4 bits, which PNG does not allow': { depth: 4, samples: Array(48).fill(1) },
   })) {
     assert.equal(await decodePng(png({ ...base, ...options })), null, name)
   }
@@ -173,9 +293,17 @@ test('a small PNG becomes WebP too, even where WebP would not be smaller', async
   assert.deepEqual(decode(webp).data, rgbaOf(await decodePng(source)))
 })
 
+test('an interlaced 4-bit palette with transparency becomes WebP with exactly its pixels', async () => {
+  const palette = chunk('PLTE', Array.from({ length: 12 * 3 }, random))
+  const alpha = chunk('tRNS', [0, 90, 255, 180])
+  const source = png({ width: 37, height: 29, colorType: 3, depth: 4, samples: randomSamples(37 * 29, 4, 12), interlace: 1, before: [palette, alpha] })
+  const webp = await pngToWebp(source)
+  assert.deepEqual(decode(webp).data, rgbaOf(await decodePng(source)))
+})
+
 test('anything unexpected keeps the PNG', async () => {
   assert.equal(await pngToWebp(new Uint8Array([137, 80, 78, 71])), null)
-  assert.equal(await pngToWebp(png({ width: 4, height: 4, colorType: 2, samples: noise(48), interlace: 1 })), null)
+  assert.equal(await pngToWebp(png({ width: 4, height: 4, colorType: 2, samples: noise(48), before: [chunk('acTL', [0, 0, 0, 2, 0, 0, 0, 0])] })), null)
 })
 
 

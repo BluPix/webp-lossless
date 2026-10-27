@@ -70,14 +70,17 @@ const webp = encodeLossless(rgba, width, height)
 so a large image is never copied. Both take options: `iccProfile` to carry a color profile along, and `predictor`,
 `search` and `groups` to force a choice the encoder otherwise makes itself.
 
-## What a PNG must be
+## Which PNG converts
 
-`pngToWebp` decodes the PNG itself, row by row, so it gets the file's exact pixels. It returns null instead of a
-WebP that would look different from the PNG, and for anything unexpected:
+`pngToWebp` decodes the PNG itself, row by row, so it gets the file's exact pixels. Every color type and bit depth
+converts, interlaced or not, palettes and transparent color keys included, and sRGB however the file states it. It
+returns null instead of a WebP that would look different from the PNG, and for a broken file:
 
-- more than 8 bits per channel, or interlacing,
-- gamma, chromaticities or HDR information without an sRGB chunk or a color profile,
-- a transparent color key in an RGB or gray image (palettes with transparency are fine),
+- 16-bit samples with detail beyond 8 bits, as WebP holds 8 bits per channel (16-bit files that hold 8-bit values
+  convert),
+- an animation (APNG),
+- a color space other than sRGB without an embedded profile: another gamma or other primaries in gAMA and cHRM, or
+  HDR in cICP,
 - an EXIF orientation that turns or mirrors the image,
 - more than 16384 pixels on a side, the most WebP can hold.
 
@@ -118,7 +121,9 @@ npm test
 ```
 
 The tests type-check the source and encode generated images every way the encoder can, each checked pixel for
-pixel by the independent decoder. They need Node 22.18 or later.
+pixel by the independent decoder. They need Node 22.18 or later. The PNG decoder was also checked against
+ImageMagick on the whole [PngSuite](http://www.schaik.com/pngsuite/): every file it converts gives ImageMagick's
+pixels.
 
 ## Credits
 
