@@ -8,13 +8,24 @@
   "repository": "github:BluPix/webp-lossless",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./worker": "./src/worker.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
+    }
   },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "test": "tsc && node --test 'test/*.test.mjs'"
   },
   "dependencies": {

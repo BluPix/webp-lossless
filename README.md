@@ -32,26 +32,37 @@ The PNG files were written by ImageMagick with its default settings. The webp-lo
 an Apple M processor. The cwebp times (libwebp 1.6.0) are the whole command on the same machine, encoding from a
 PPM file. libwebp's `dwebp` decodes all six files to the original pixels.
 
-## Usage
+## Install
 
-The source is TypeScript with `.ts` extensions in imports, as bundlers such as Vite or esbuild take it. Node 22.18
-and later run it directly, though not from inside `node_modules`.
+Install the release, which comes compiled to JavaScript with types:
+
+```sh
+npm install https://github.com/BluPix/webp-lossless/releases/download/v1.0.0/webp-lossless-1.0.0.tgz
+```
+
+npm records the file's checksum, so a later install fails rather than takes a different file. Or copy `src/` into
+your project: it is TypeScript with `.ts` extensions in imports, as bundlers such as Vite or esbuild take it, and
+Node 22.18 and later run it directly.
+
+## Usage
 
 Converting a PNG, with a check that the WebP holds exactly its pixels:
 
 ```ts
-import { pngToWebp } from './webp-lossless/src/index.ts'
+import { pngToWebp } from 'webp-lossless'
 
 const webp = await pngToWebp(new Uint8Array(await file.arrayBuffer()))
 // null when the PNG cannot be converted faithfully (see below): keep the PNG then
 const out = webp ? new Blob([webp], { type: 'image/webp' }) : file
 ```
 
-A large photo takes seconds, so in a page run it in a worker. `src/worker.ts` takes the PNG's bytes and answers
-with the WebP's, or null:
+A large photo takes seconds, so in a page run it in a worker. The worker, `webp-lossless/worker` (`src/worker.ts`
+when copied), takes the PNG's bytes and answers with the WebP's, or null. With Vite:
 
 ```ts
-const worker = new Worker(new URL('./webp-lossless/src/worker.ts', import.meta.url), { type: 'module' })
+import PngWorker from 'webp-lossless/worker?worker'
+
+const worker = new PngWorker()
 worker.onmessage = (e: MessageEvent<Uint8Array | null>) => {
   // e.data is the WebP, or null to keep the PNG
 }
@@ -61,7 +72,7 @@ worker.postMessage(png, [png.buffer])
 Encoding pixels you already have, 4 bytes per pixel, red, green, blue and alpha, not premultiplied:
 
 ```ts
-import { encodeLossless } from './webp-lossless/src/index.ts'
+import { encodeLossless } from 'webp-lossless'
 
 const webp = encodeLossless(rgba, width, height)
 ```
