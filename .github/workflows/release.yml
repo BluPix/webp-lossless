@@ -34,4 +34,10 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" webp-lossless-*.tgz --verify-tag --title "$TAG" --generate-notes
+        run: |
+          # A release made in the web UI creates the tag too, so it is there already and only gets the tarball
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" webp-lossless-*.tgz
+          else
+            gh release create "$TAG" webp-lossless-*.tgz --verify-tag --title "$TAG" --generate-notes
+          fi

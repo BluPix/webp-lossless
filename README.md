@@ -138,7 +138,8 @@ pixels.
 ## Releasing
 
 A pushed tag such as `v1.0.1` makes GitHub Actions run the tests, build the tarball and publish it as a release.
-The version comes from the tag, so `package.json` in the repository stays at `0.0.0-development`.
+A release made in the web UI with a new tag gets the tarball the same way. The version comes from the tag, so
+`package.json` in the repository stays at `0.0.0-development`.
 
 ## Credits
 
