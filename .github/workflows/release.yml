@@ -1,0 +1,39 @@
+# Builds the tarball from a version tag and publishes it as a GitHub release
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # for a tag pushed before this workflow existed
+    inputs:
+      tag:
+        description: Existing tag, e.g. v1.0.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - name: Check the tag matches package.json
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          [ "$TAG" = "v$version" ] || { echo "::error::Tag $TAG does not match version $version in package.json"; exit 1; }
+      - run: npm pack
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" webp-lossless-*.tgz --verify-tag --title "$TAG" --generate-notes

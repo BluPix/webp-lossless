@@ -12,9 +12,8 @@ fingerprinting).
 
 ## Status: not maintained
 
-This code is published as is, under the MIT license. There are no releases, no npm package and no support, and
-issues or pull requests will most likely go unanswered. Copy the files you need into your project and change them
-as you like.
+This code is published as is, under the MIT license. There is no npm package and no support, and issues or pull
+requests will most likely go unanswered. Copy the files you need into your project and change them as you like.
 
 ## Results
 
@@ -135,6 +134,11 @@ The tests type-check the source and encode generated images every way the encode
 pixel by the independent decoder. They need Node 22.18 or later. The PNG decoder was also checked against
 ImageMagick on the whole [PngSuite](http://www.schaik.com/pngsuite/): every file it converts gives ImageMagick's
 pixels.
+
+## Releasing
+
+A pushed tag such as `v1.0.1` that matches the version in `package.json` makes GitHub Actions run the
+tests, build the tarball and publish it as a release.
 
 ## Credits
 
