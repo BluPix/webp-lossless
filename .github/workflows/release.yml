@@ -3,11 +3,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]*']
   workflow_dispatch: # for a tag pushed before this workflow existed
     inputs:
       tag:
-        description: Existing tag, e.g. v1.0.0
+        description: Existing tag, e.g. 1.0.0
         required: true
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Take the version from the tag
-        run: npm version --no-git-tag-version --allow-same-version "${TAG#v}"
+        run: npm version --no-git-tag-version --allow-same-version "$TAG"
       - run: npm pack
       - name: Publish the release
         env:

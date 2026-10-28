@@ -36,7 +36,7 @@ PPM file. libwebp's `dwebp` decodes all six files to the original pixels.
 Install the release, which comes compiled to JavaScript with types:
 
 ```sh
-npm install https://github.com/BluPix/webp-lossless/releases/download/v1.0.0/webp-lossless-1.0.0.tgz
+npm install https://github.com/BluPix/webp-lossless/releases/download/1.0.0/webp-lossless-1.0.0.tgz
 ```
 
 npm records the file's checksum, so a later install fails rather than takes a different file. Or copy `src/` into
@@ -137,7 +137,7 @@ pixels.
 
 ## Releasing
 
-A pushed tag such as `v1.0.1` makes GitHub Actions run the tests, build the tarball and publish it as a release.
+A pushed tag such as `1.0.1` makes GitHub Actions run the tests, build the tarball and publish it as a release.
 A release made in the web UI with a new tag gets the tarball the same way. The version comes from the tag, so
 `package.json` in the repository stays at `0.0.0-development`.
 
